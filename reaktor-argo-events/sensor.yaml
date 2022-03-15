@@ -1,0 +1,88 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: webhook
+  namespace: argo-events
+spec:
+  template:
+    serviceAccountName: operate-workflow-sa
+  dependencies:
+  - name: github
+    eventSourceName: github
+    eventName: reaktor-web
+  triggers:
+  - template:
+      name: argo-workflows
+      argoWorkflow:
+        # https://github.com/argoproj/argo-events/blob/master/api/sensor.md#argoproj.io/v1alpha1.ArgoWorkflowTrigger
+        group: argoproj.io
+        version: v1alpha1
+        resource: Workflow
+        operation: submit
+        metadata:
+          generateName: cluster-workflow-template-hello-world-
+        source:
+          resource:
+            apiVersion: argoproj.io/v1alpha1
+            kind: Workflow
+            metadata:
+              name: reaktor-web-workflows
+              namespace: argo
+              labels:
+                workflows.argoproj.io/archive-strategy: "false"
+            spec:
+              entrypoint: full
+              # serviceAccountName: workflow
+              volumes:
+              - name: kaniko-secret
+                secret:
+                  secretName: regcred
+                  items:
+                    - key: .dockerconfigjson
+                      path: config.json
+              - name: github-access
+                secret:
+                  secretName: github-access
+                  items:
+                    - key: token
+                      path: token
+                    - key: email
+                      path: email
+                    - key: user
+                      path: user
+              templates:
+              - name: full
+                dag:
+                  tasks:
+                  - name: build-container-image
+                    templateRef:
+                      name: kaniko-build-from-git
+                      template: build
+                      clusterScope: true
+                    arguments:
+                      parameters:
+                      - name: app_repo
+                        value: git://github.com/ThangEthan/reaktor-web
+                      - name: container_image
+                        value: thangvu201098/reaktor-web
+                      - name: container_tag
+                        value: 0.0.5
+                  - name: deploy-staging
+                    templateRef:
+                      name: change-image-tag
+                      template: change
+                      clusterScope: true
+                    arguments:
+                      parameters:
+                      - name: repo_owner
+                        value: ThangEthan
+                      - name: repo_name
+                        value: reaktor-web-conf
+                      - name: image_owner
+                        value: thangvu201098
+                      - name: image_name
+                        value: reaktor-web
+                      - name: tag
+                        value: 0.0.5
+                    dependencies:
+                    - build-container-image
